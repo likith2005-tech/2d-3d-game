@@ -1,0 +1,195 @@
+import pygame
+import random
+import pytmx
+import os
+
+# Initialize Pygame
+pygame.init()
+
+# Constants
+WIDTH, HEIGHT = 800, 600
+SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Base Strike")
+CLOCK = pygame.time.Clock()
+
+# Load sounds
+SOUNDS = {
+    "missile": pygame.mixer.Sound("missile.mp3.mp3"),
+    "explosion": pygame.mixer.Sound("blast.mp3.mp3"),
+    "block": pygame.mixer.Sound("block.mp3.mp3"),
+    "alert": pygame.mixer.Sound("alert.mp3.mp3"),
+}
+
+# Game Constants
+BASE_HEALTH = 100
+START_CURRENCY = 1000
+MISSILES = {
+    "light": {"cost": 100, "damage": 10, "speed": 5},
+    "heavy": {"cost": 300, "damage": 30, "speed": 3},
+    "emp": {"cost": 200, "damage": 0, "speed": 4},
+}
+DEFENSE_COOLDOWN = 3000  # milliseconds
+
+# Game State
+players = [
+    {"health": BASE_HEALTH, "currency": START_CURRENCY, "defense_ready": True, "last_defense": 0, "rect": pygame.Rect(50, HEIGHT // 2 - 50, 100, 100)},  # Player 1
+    {"health": BASE_HEALTH, "currency": START_CURRENCY, "defense_ready": True, "last_defense": 0, "rect": pygame.Rect(WIDTH - 250, HEIGHT // 2 - 50, 100, 100)},  # Player 2 (closer)
+]
+turn = 0
+running = True
+font = pygame.font.SysFont("Arial", 24)
+
+# Initialize missiles list
+missiles = []  # Global missiles list
+
+# Load the TMX map
+tmx_map = pytmx.load_pygame("untitled.tmx")  # Replace with the path to your .tmx file
+
+def draw():
+    SCREEN.fill((0, 0, 0))  # Clear the screen
+
+    # Draw the tiles from the TMX map
+    for layer_index, layer in enumerate(tmx_map.layers):
+        if isinstance(layer, pytmx.TiledTileLayer):
+            for x, y, tile in layer.tiles():
+                # Calculate the position to draw the tile on the screen
+                tile_image = tmx_map.get_tile_image(x, y, layer_index)  # Pass layer_index instead of the layer object
+                if tile_image:
+                    SCREEN.blit(tile_image, (x * tmx_map.tilewidth, y * tmx_map.tileheight))
+
+    # Draw rectangles for bases
+    pygame.draw.rect(SCREEN, (255, 0, 0), players[0]["rect"])  # Player 1's base
+    pygame.draw.rect(SCREEN, (0, 0, 255), players[1]["rect"])  # Player 2's base
+
+    # Draw player info and controls
+    p1 = players[0]
+    p2 = players[1]
+    info1 = font.render(f"P1 Health: {p1['health']} Currency: {p1['currency']}", True, (255, 255, 255))
+    info2 = font.render(f"P2 Health: {p2['health']} Currency: {p2['currency']}", True, (255, 255, 255))
+    turn_text = font.render(f"Player {turn+1}'s Turn", True, (255, 255, 0))
+    controls_text = font.render("Controls: Arrow Keys to Move | 1-Light | 2-Heavy | 3-EMP", True, (200, 200, 200))
+
+    SCREEN.blit(info1, (20, 20))
+    SCREEN.blit(info2, (20, 50))
+    SCREEN.blit(turn_text, (WIDTH // 2 - 100, 20))
+    SCREEN.blit(controls_text, (WIDTH//2 - 150, HEIGHT - 40))
+    pygame.display.flip()
+
+def handle_missile(fired_by, missile_type):
+    global missiles, turn  # Declare missiles as global
+    other = 1 - fired_by
+    missile = MISSILES[missile_type]
+
+    if players[fired_by]["currency"] < missile["cost"]:
+        SOUNDS["alert"].play()
+        return  # Not enough currency
+
+    players[fired_by]["currency"] -= missile["cost"]
+    SOUNDS["missile"].play()
+
+    missile_rect = pygame.Rect(50 + 100 if fired_by == 0 else WIDTH - 150 - 10, HEIGHT // 2 + 25, 10, 5)
+    
+    # Set missile color based on type
+    if missile_type == "light":
+        missile_color = (255, 0, 0)  # Red
+    elif missile_type == "heavy":
+        missile_color = (0, 255, 0)  # Green
+    else:
+        missile_color = (128, 128, 128)  # Gray for EMP
+
+    missiles.append({
+        "rect": missile_rect,
+        "color": missile_color,
+        "speed": missile["speed"],
+        "damage": missile["damage"],
+        "fired_by": fired_by,
+        "missile_type": missile_type
+    })
+
+    turn = other
+
+def update_missiles():
+    global missiles  # Access the global missiles list
+    for missile in missiles[:]:
+        missile_data = MISSILES[missile["missile_type"]]
+        speed = missile_data["speed"]
+        missile["rect"].x += speed * (1 if missile["fired_by"] == 0 else -1)
+
+        # Check if the missile hits the opponent's base
+        if missile["rect"].colliderect(players[1]["rect"]) and missile["fired_by"] == 0:
+            players[1]["health"] -= missile["damage"]
+            missiles.remove(missile)  # Remove the missile from the list
+            SOUNDS["explosion"].play()
+        elif missile["rect"].colliderect(players[0]["rect"]) and missile["fired_by"] == 1:
+            players[0]["health"] -= missile["damage"]
+            missiles.remove(missile)  # Remove the missile from the list
+            SOUNDS["explosion"].play()
+
+def check_winner():
+    if players[0]["health"] <= 0:
+        return "Player 2 Wins!"
+    elif players[1]["health"] <= 0:
+        return "Player 1 Wins!"
+    return None
+
+# Update player movement
+def update_player_movement():
+    keys = pygame.key.get_pressed()  # Get the keys pressed
+
+    # Player 1 (User) controls (Arrow keys to move)
+    if keys[pygame.K_LEFT]:
+        players[0]["rect"].x -= 5
+    if keys[pygame.K_RIGHT]:
+        players[0]["rect"].x += 5
+    if keys[pygame.K_UP]:
+        players[0]["rect"].y -= 5
+    if keys[pygame.K_DOWN]:
+        players[0]["rect"].y += 5
+
+    # Keep Player 1 inside the screen
+    players[0]["rect"].x = max(0, min(players[0]["rect"].x, WIDTH - players[0]["rect"].width))
+    players[0]["rect"].y = max(0, min(players[0]["rect"].y, HEIGHT - players[0]["rect"].height))
+
+    # Player 2 (AI) moves randomly
+    move_direction = random.choice(['left', 'right', 'up', 'down'])
+    if move_direction == 'left':
+        players[1]["rect"].x -= 3
+    elif move_direction == 'right':
+        players[1]["rect"].x += 3
+    elif move_direction == 'up':
+        players[1]["rect"].y -= 3
+    elif move_direction == 'down':
+        players[1]["rect"].y += 3
+
+    # Keep Player 2 inside the screen
+    players[1]["rect"].x = max(0, min(players[1]["rect"].x, WIDTH - players[1]["rect"].width))
+    players[1]["rect"].y = max(0, min(players[1]["rect"].y, HEIGHT - players[1]["rect"].height))
+
+# Game loop
+while running:
+    CLOCK.tick(15)  # Reduce frame rate to 15 FPS
+    update_missiles()
+    update_player_movement()
+    draw()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                handle_missile(turn, "light")
+            elif event.key == pygame.K_2:
+                handle_missile(turn, "heavy")
+            elif event.key == pygame.K_3:
+                handle_missile(turn, "emp")
+
+    winner = check_winner()
+    if winner:
+        win_text = font.render(winner, True, (255, 0, 0))
+        SCREEN.blit(win_text, (WIDTH // 2 - 100, HEIGHT // 2))
+        pygame.display.flip()
+        pygame.time.delay(3000)
+        running = False
+
+pygame.quit()
